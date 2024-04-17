@@ -261,74 +261,7 @@ class CV374Data:
         temp_acc_data_fft_freq["HVSR_power_smoothed"] = temp_acc_data_fft_freq["HVSR_power_smoothed"].fillna(method="ffill")
         
         return temp_acc_data_fft_freq
-        
-    def _calcurate_HV_spectrum(self):
-        
-        HV_spectrum_data = []
-        
-        for start_index in self.start_indexes:
-            temp_time_data = self.time_series_data["time"].iloc[start_index:start_index + self.clip_num_data]
-            temp_fft_freq = np.fft.fftfreq(self.clip_num_data, d=1/self.freq)
-            temp_fft_freq = temp_fft_freq[:self.clip_num_data//2]
             
-            temp_acc_data = self.time_series_data.iloc[start_index:start_index + self.clip_num_data, 1:]
-            temp_acc_data = temp_acc_data - np.mean(temp_acc_data)
-            
-            if self.is_cosine_taper:
-                temp_acc_data = temp_acc_data * ss.parzen(self.clip_num_data).reshape(-1, 1)
-            
-            # Compute power spectrum density
-            temp_acc_data_fft = np.fft.fft(temp_acc_data, axis=0)
-            temp_acc_data_fft = np.abs(temp_acc_data_fft) ** 2
-            temp_acc_data_fft = temp_acc_data_fft[:self.clip_num_data//2]
-            temp_acc_data_fft[1:-1] = 2 * temp_acc_data_fft[1:-1]
-            
-            # Create pandas dataframe with concatanating frequency and power spectrum density
-            temp_acc_data_fft_freq = pd.DataFrame({"freq":temp_fft_freq, 
-                                                    "x_fft_power":temp_acc_data_fft[:, 0], 
-                                                    "y_fft_power":temp_acc_data_fft[:, 1], 
-                                                    "z_fft_power":temp_acc_data_fft[:, 2]})
-            
-            temp_acc_data_fft_freq["h_fft_power"] = np.sqrt(temp_acc_data_fft_freq["x_fft_power"] ** 2 +\
-                                                        temp_acc_data_fft_freq["y_fft_power"] ** 2)
-            
-            temp_acc_data_fft_freq["v_fft_power"] = np.sqrt(temp_acc_data_fft_freq["z_fft_power"] ** 2)
-            
-            temp_acc_data_fft_freq["HVSR_power"] = (temp_acc_data_fft_freq["h_fft_power"] / temp_acc_data_fft_freq["v_fft_power"]) ** (1/2)
-            
-            temp_acc_data_fft_freq["HVSR_power_smoothed"] = temp_acc_data_fft_freq["HVSR_power"]
-            
-            if self.parzen_width > 0:
-                temp_acc_data_fft_freq["HVSR_power_smoothed"] = 0
-
-                # 要修正：parzen windowの適用が正しくない．freq=0の値が他の値に影響を与えている．単純に平滑化するだけであればfreq=0の値は他の周波数の振幅に影響を与えるべきではない．
-                # 簡易修正：freq=0の値を除外して平滑化する．
-                
-                
-                temp_acc_data_fft_freq_HVSR_power = temp_acc_data_fft_freq["HVSR_power"].copy()
-                temp_acc_data_fft_freq_HVSR_power.iloc[0] = 0
-                temp_freq_interval = temp_acc_data_fft_freq.iloc[1, 0] - temp_acc_data_fft_freq.iloc[0, 0]
-                
-                temp_acc_data_fft_freq["HVSR_power_smoothed"]= temp_acc_data_fft_freq_HVSR_power.rolling(window=int(self.parzen_width / temp_freq_interval), center=True, win_type="parzen").mean()
-
-            temp_acc_data_fft_freq["HVSR_power_smoothed"] = temp_acc_data_fft_freq["HVSR_power_smoothed"].fillna(method="bfill")
-            temp_acc_data_fft_freq["HVSR_power_smoothed"] = temp_acc_data_fft_freq["HVSR_power_smoothed"].fillna(method="ffill")
-            
-            HV_spectrum_data.append(temp_acc_data_fft_freq)
-        
-        # calculate the geometric mean of HVSR_power_smoothed
-        temp_HVSR_power_smoothed_list = []
-        for i, start_index in enumerate(self.start_indexes):
-            temp_HVSR_power_smoothed_list.append(HV_spectrum_data[i]["HVSR_power_smoothed"])
-        
-        temp_HVSR_power_smoothed_list = np.array(temp_HVSR_power_smoothed_list)
-        temp_geomean_HVSR_power_smoothed = np.exp(np.mean(np.log(temp_HVSR_power_smoothed_list), axis=0))
-        
-        HV_spectrum_data_geomean = pd.DataFrame({"freq":temp_acc_data_fft_freq["freq"], 
-                                                "geomean_HVSR_power_smoothed":temp_geomean_HVSR_power_smoothed})
-        
-        return (HV_spectrum_data, HV_spectrum_data_geomean)
-    
     
     def _export_time_series_record_base(self):
         
