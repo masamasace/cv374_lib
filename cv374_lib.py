@@ -164,8 +164,27 @@ class CV374Data:
             plt.close()
             gc.collect()
         
+        temp_last_index = len(self.time_series_data) - self.clip_num_data
+        temp_fft_interval = 1 * self.freq
         
-        self._calcurate_HV_spectrum_base(self.time_series_data.iloc[:self.clip_num_data, 1:])
+        self.frequecy_domain_index = np.arange(0, temp_last_index, temp_fft_interval)
+        
+        for i in self.frequecy_domain_index:
+            
+            temp_col_name = "HVSR_power_smoothed_" + "{:07d}".format(i)
+            temp_frequecy_domain_data = self._calcurate_HV_spectrum_base(self.time_series_data.iloc[i:self.clip_num_data+i, 1:]).copy()
+            
+            if i == 0:
+                self.frequecy_domain_data = temp_frequecy_domain_data[["freq", "HVSR_power_smoothed"]]
+            
+            else:
+                self.frequecy_domain_data = pd.concat((self.frequecy_domain_data, temp_frequecy_domain_data["HVSR_power_smoothed"]), axis=1)
+                
+            self.frequecy_domain_data.rename(columns={"HVSR_power_smoothed":temp_col_name}, inplace=True)
+            
+            print("Calcurated HV spectrum!", str(i), "/", temp_last_index)            
+            
+        
         
         
     def export_HV_spectrum(self, start_indexes = [0, 5000, 10000], is_only_show_parzen_filter_result = True):
@@ -208,9 +227,7 @@ class CV374Data:
         temp_fft_freq = temp_fft_freq[:self.clip_num_data//2]
         
         acc_data = acc_data.values
-        
-        print(acc_data)
-        
+               
         temp_acc_data = acc_data - np.mean(acc_data)
         temp_len_acc_data = len(temp_acc_data)
         
