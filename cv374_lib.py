@@ -74,10 +74,13 @@ class CV374Data:
         self.freq = 100  # Frequency of the data
         self.ylim = [-0.001, 0.001]  # Y-axis limits for time series record
         self.start_indexes = [0, 5000, 10000]  # Start indexes for exporting time series record
+        
+        self.total_num_data = 90000  # Total number of data points
         self.clip_num_data = 16384  # Number of data points to clip for HV spectrum calculation
         self.data_path = ""  # Directory path of CV374 data
         self.dir_result = ""  # Directory path for saving results
         self.time_dif = 0  # Time difference between UTC and local time
+        self.max_index_HVSR = 0  # Maximum index for HVSR power spectrum
         
         self.is_apply_butterworth_filter = True  # Flag for applying Butterworth filter
         self.is_export_timeseries_butterworth_filter = False  # Flag for applying Butterworth filter
@@ -112,7 +115,7 @@ class CV374Data:
             self.dir_result = self.data_path / "result"
             self.dir_result.mkdir(exist_ok=True, parents=True)
 
-            print("Directory Path:", self.data_path)
+            print("\nDirectory Path:", self.data_path)
 
             # Get the list of ASC file stems in the directory
             temp_asc_file_stem_list = []
@@ -153,7 +156,8 @@ class CV374Data:
             self.time_series_data = pd.concat((temp_time_stamp, temp_time_series_data), axis=1)
 
         else:
-            print("File:", self.data_path.stem)
+            
+            print("\nRead:", self.data_path.stem)
             
             # Create a directory for saving results
             self.dir_result = self.data_path.parent / "result" / self.data_path.stem
@@ -170,6 +174,8 @@ class CV374Data:
             self.time_series_data["time"] = self.time_series_data["time"] + self.initial_time
 
         self.col_names = self.time_series_data.columns.values
+        self.total_num_data = len(self.time_series_data)
+        
                 
     
     def export_time_series_record(self, ylim=[-0.001, 0.001]):
@@ -270,7 +276,7 @@ class CV374Data:
             plt.close()
             gc.collect()
         
-        temp_last_index = len(self.time_series_data) - self.clip_num_data
+        temp_last_index = self.total_num_data - self.clip_num_data
         temp_fft_interval = 1 * self.freq
         
         self.frequecy_domain_index = np.arange(0, temp_last_index, temp_fft_interval)
@@ -300,6 +306,9 @@ class CV374Data:
             print("")
             print("Calcurated HV spectrum!")
         
+        self.max_index_HVSR = self.frequecy_domain_data.columns.values[-1]
+        self.max_index_HVSR = int(self.max_index_HVSR.split("_")[-1])
+        
         if self.is_export_figure_3D_running_spectra:
             self._export_running_HV_spectra_3D() 
         
@@ -316,7 +325,6 @@ class CV374Data:
         self.start_indexes = start_indexes
         self.is_only_show_parzen_filter_result = is_only_show_parzen_filter_result
         
-        
         if self.is_apply_butterworth_filter:
             temp_b, temp_a = ss.butter(self.butterworth_order, [self.butterworth_lowcut, self.butterworth_highcut], btype="band", fs=self.freq)
             self.time_series_data.iloc[:, 1:] = ss.filtfilt(temp_b, temp_a, self.time_series_data.iloc[:, 1:], axis=0)
@@ -327,7 +335,7 @@ class CV374Data:
         for i in range(6):
             
             for j, start_index in enumerate(self.start_indexes):
-            
+                
                 temp_bottom = axes[i, 0].get_ylim()[0]
                 temp_top = axes[i, 0].get_ylim()[1]
                 temp_height = temp_top - temp_bottom
@@ -451,12 +459,12 @@ class CV374Data:
                 sub_axes_1.xaxis.set_ticks_position("bottom")
                 sub_axes_1.xaxis.set_label_position("bottom")
                 sub_axes_1.xaxis.set_tick_params(width=0.5)
-                sub_axes_1_majorlabel = np.arange(0, len(self.time_series_data) + 1, 5000, dtype=int)
-                sub_axes_1_minorlabel = np.arange(0, len(self.time_series_data) + 1, 1000, dtype=int)
+                sub_axes_1_majorlabel = np.arange(0, self.total_num_data + 1, 5000, dtype=int)
+                sub_axes_1_minorlabel = np.arange(0, self.total_num_data + 1, 1000, dtype=int)
                 sub_axes_1.set_xticks(sub_axes_1_majorlabel)
                 sub_axes_1.set_xticks(sub_axes_1_minorlabel, minor="True")
                 sub_axes_1.set_xticklabels(sub_axes_1_majorlabel, fontsize=8, rotation=90)
-                sub_axes_1.set_xlim(0, len(self.time_series_data))             
+                sub_axes_1.set_xlim(0, self.total_num_data)             
                 sub_axes_1.set_xlabel("Start Index Number", fontsize=8)
                 
                 sub_axes_2 = axes[i, 0].twiny()
@@ -468,12 +476,12 @@ class CV374Data:
                 sub_axes_2.xaxis.set_ticks_position("bottom")
                 sub_axes_2.xaxis.set_label_position("bottom")
                 sub_axes_2.xaxis.set_tick_params(width=0.5)
-                sub_axes_2_majorlabel = np.arange(0, len(self.time_series_data) + 1, 5000, dtype=int) - self.clip_num_data
+                sub_axes_2_majorlabel = np.arange(0, self.total_num_data + 1, 5000, dtype=int) - self.clip_num_data
                 sub_axes_2_majorlabel[sub_axes_2_majorlabel < 0] = 0
                 sub_axes_2.set_xticks(sub_axes_1_majorlabel)
                 sub_axes_2.set_xticks(sub_axes_1_minorlabel, minor="True")
                 sub_axes_2.set_xticklabels(sub_axes_2_majorlabel, fontsize=8, rotation=90)
-                sub_axes_2.set_xlim(0, len(self.time_series_data))             
+                sub_axes_2.set_xlim(0, self.total_num_data)             
                 sub_axes_2.set_xlabel("End Index Number", fontsize=8)
                   
             else:
@@ -574,8 +582,13 @@ class CV374Data:
         temp_zmin_log10 = math.log10(self.HVSR_lim[0])
         temp_zmax_log10 = math.log10(self.HVSR_lim[1])
         temp_z_tickvals = np.linspace(temp_zmin_log10, temp_zmax_log10, 5)
-        temp_z_ticktext = np.logspace(temp_zmin_log10, temp_zmax_log10, 5)
-        
+        temp_z_ticktext = np.round(np.logspace(temp_zmin_log10, temp_zmax_log10, 5), 2)
+        temp_title_text = "File: " + self.asc_file_stem_list[0] + " Running HV Spectra (3D)" + \
+                        "<br>Frequency Range: " + str(self.freq_lim[0]) + " - " + str(self.freq_lim[1]) + " Hz" + \
+                        "<br>HVSR Range: " + str(self.HVSR_lim[0]) + " - " + str(self.HVSR_lim[1]) + \
+                        "<br>Window Samples: " + str(self.clip_num_data) + \
+                        "<br>Total Samples: " + str(self.total_num_data)
+                            
         x = np.arange(0, len(temp_frequecy_domain_data_columns))
         z = np.log10(temp_frequecy_domain_data.values)
         
@@ -595,8 +608,19 @@ class CV374Data:
                          tickvals=temp_z_tickvals,
                          ticktext=temp_z_ticktext),
             aspectratio=dict(x=2, y=1, z=0.5),
-        ))
+            ),
+            title = go.layout.Title(text=temp_title_text)
+        )
         
+        fig.update_layout(coloraxis=dict(
+            colorbar=dict(
+            title="HVSR",
+            tickmode="array",
+            tickvals=temp_z_tickvals,
+            ticktext=temp_z_ticktext
+            )
+        ))
+                
         # save the figure as an interactive plot
         fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_running_HV_spectra_3D.html")
         fig.write_html(fig_name)
