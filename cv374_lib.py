@@ -7,6 +7,11 @@ import gc
 import scipy.signal as ss
 import matplotlib.dates as mdates
 import matplotlib.patches as patches
+import matplotlib.colors as mcolors
+import matplotlib.ticker as mticker
+import plotly.graph_objects as go
+import math
+
 
 
 
@@ -27,95 +32,161 @@ def setup_figure(num_row=1, num_col=1, width=5, height=4, left=0.125, right=0.9,
 class CV374Data:
     """
     Class for reading and processing CV374 data.
-    
-    data_path: str
-        Directory path of CV374 data.
-    time_dif: int
-        Time difference between UTC and local time.
-    
+
+    Attributes:
+        freq (int): Frequency of the data.
+        ylim (list): Y-axis limits for time series record.
+        start_indexes (list): Start indexes for exporting time series record.
+        clip_num_data (int): Number of data points to clip for HV spectrum calculation.
+        data_path (str): Directory path of CV374 data.
+        dir_result (str): Directory path for saving results.
+        time_dif (int): Time difference between UTC and local time.
+        is_export_timeseries_butterworth_filter (bool): Flag for applying Butterworth filter.
+        is_cosine_taper (bool): Flag for applying cosine taper.
+        is_parzen_smoothing (bool): Flag for applying Parzen smoothing.
+        parzen_width (float): Width parameter for Parzen smoothing.
+        is_only_show_parzen_filter_result (bool): Flag for showing only Parzen filter result.
+        is_export_figure_3D_running_spectra (bool): Flag for exporting 3D running spectra.
+        surface_thin_out_interval (int): Interval for thinning out the surface in 3D running spectra.
+        freq_lim (list): Frequency limits for HV spectrum.
+        HVSR_lim (list): HVSR limits for HV spectrum.
+
+    Methods:
+        __init__(): Initializes the CV374Data object.
+        read_data(data_path, time_dif=-6): Reads the data from the specified data path and stores it in the object.
+        export_time_series_record(ylim=[-0.001, 0.001]): Export the time series record as a plot.
+        calcurate_HV_spectrum(clip_num_data=16384, cosine_taper=True, is_export_timeseries_butterworth_filter=False,
+                              butterworth_order=2, butterworth_lowcut=0.1, butterworth_highcut=20,
+                              is_parzen_smoothing=True, parzen_width=0.2, is_konno_ohmachi_smoothing=False,
+                              konno_ohmachi_width=0.2, is_export_figure_3D_running_spectra=False,
+                              surface_thin_out_interval=10, is_export_figure_2D_running_spectra=False,
+                              freq_lim=[0.1, 50], HVSR_lim=[0.05, 50]): Calculates the HV spectrum.
+
     """
+
     def __init__(self) -> None:
-        self.freq = 100
-        self.ylim = [-0.01, 0.01]
-        self.start_indexes = [0, 5000, 10000]
-        self.clip_num_data = 16384
-        self.parzen_width = 0.2
-        self.data_path = ""
-        self.dir_result = ""
-        self.time_dif = 0
+        """
+        Initializes the CV374Data object.
+
+        Default values for CV374Data object attributes are set in this method.
+
+        """
+        self.freq = 100  # Frequency of the data
+        self.ylim = [-0.001, 0.001]  # Y-axis limits for time series record
+        self.start_indexes = [0, 5000, 10000]  # Start indexes for exporting time series record
+        self.clip_num_data = 16384  # Number of data points to clip for HV spectrum calculation
+        self.data_path = ""  # Directory path of CV374 data
+        self.dir_result = ""  # Directory path for saving results
+        self.time_dif = 0  # Time difference between UTC and local time
         
-        self.is_cosine_taper = True
-        self.is_parzen_smoothing = False
-        self.is_only_show_parzen_filter_result = True
-    
-    def read_data(self, data_path, time_dif = -6) -> None:
-        
+        self.is_apply_butterworth_filter = True  # Flag for applying Butterworth filter
+        self.is_export_timeseries_butterworth_filter = False  # Flag for applying Butterworth filter
+        self.is_cosine_taper = True  # Flag for applying cosine taper
+        self.is_parzen_smoothing = True  # Flag for applying Parzen smoothing
+        self.parzen_width = 0.2  # Width parameter for Parzen smoothing
+        self.is_only_show_parzen_filter_result = True  # Flag for showing only Parzen filter result
+        self.is_export_figure_3D_running_spectra = False  # Flag for exporting 3D running spectra
+        self.surface_thin_out_interval = 10  # Interval for thinning out the surface in 3D running spectra
+        self.freq_lim = [0.1, 50]  # Frequency limits for HV spectrum
+        self.HVSR_lim = [0.01, 100]  # HVSR limits for HV spectrum
+
+    def read_data(self, data_path, time_dif=-6) -> None:
+        """
+        Reads the data from the specified data path and stores it in the object.
+
+        Args:
+            data_path (str): The path to the data file or directory.
+            time_dif (int, optional): The time difference in hours. Defaults to -6.
+
+        Returns:
+            None
+
+        """
+        # Resolve the data path and set the time difference
         self.data_path = Path(data_path).resolve()
         self.time_dif = datetime.timedelta(hours=time_dif)
-        
-        
+
+        # Check if the data path is a directory
         if self.data_path.is_dir() == True:
+            # Create a directory for saving results
             self.dir_result = self.data_path / "result"
             self.dir_result.mkdir(exist_ok=True, parents=True)
-            
+
             print("Directory Path:", self.data_path)
-            
+
+            # Get the list of ASC file stems in the directory
             temp_asc_file_stem_list = []
             for temp_asc_file_path_1 in self.data_path.glob("*.asc"):
                 temp_asc_file_stem_list.append(temp_asc_file_path_1.stem[:22])
-            
+
             self.asc_file_stem_list = list(sorted(set(temp_asc_file_stem_list)))
-            
+
             temp_time_series_data = np.empty((0, 3))
-                    
+
+            # Read the data from each ASC file
             for temp_asc_file_stem in self.asc_file_stem_list:
-                
+
                 temp_time_series_data_each = []
-                
-                for i in range(3):
-                    temp_asc_file_path_2 = self.data_path / (temp_asc_file_stem + ".0" + str(i + 1) + ".asc")
-                    temp_acc_comp_each = pd.read_csv(temp_asc_file_path_2, skiprows=8, header=None)
-                    temp_time_series_data_each.append(temp_acc_comp_each.values.flatten())
-                
-                temp_time_series_data_each = np.array(temp_time_series_data_each).T
-                temp_time_series_data = np.append(temp_time_series_data, temp_time_series_data_each, axis=0)
-            
+
+            # Read each acceleration component from the ASC file
+            for i in range(3):
+                temp_asc_file_path_2 = self.data_path / (temp_asc_file_stem + ".0" + str(i + 1) + ".asc")
+                temp_acc_comp_each = pd.read_csv(temp_asc_file_path_2, skiprows=8, header=None)
+                temp_time_series_data_each.append(temp_acc_comp_each.values.flatten())
+
+            temp_time_series_data_each = np.array(temp_time_series_data_each).T
+            temp_time_series_data = np.append(temp_time_series_data, temp_time_series_data_each, axis=0)
+
             temp_col_names = ["x", "y", "z"]
             temp_time_series_data = pd.DataFrame(temp_time_series_data, columns=temp_col_names)
-            
+
             temp_initial_time_format = "%Y%m%d%H%M%S"
             self.initial_time = datetime.datetime.strptime(self.asc_file_stem_list[0][:14], temp_initial_time_format) + self.time_dif
             record_duration = (datetime.datetime.strptime(self.asc_file_stem_list[1][:14], temp_initial_time_format) -\
-                                    datetime.datetime.strptime(self.asc_file_stem_list[0][:14], temp_initial_time_format)) * len(self.asc_file_stem_list)
-            
+                        datetime.datetime.strptime(self.asc_file_stem_list[0][:14], temp_initial_time_format)) * len(self.asc_file_stem_list)
+
             temp_time_stamp = pd.date_range(self.initial_time, 
-                                            self.initial_time + record_duration - datetime.timedelta(seconds=1/self.freq), 
-                                            freq=datetime.timedelta(seconds=1/self.freq))
+                            self.initial_time + record_duration - datetime.timedelta(seconds=1/self.freq), 
+                            freq=datetime.timedelta(seconds=1/self.freq))
             temp_time_stamp = pd.DataFrame({"time":temp_time_stamp})
-            
+
             self.time_series_data = pd.concat((temp_time_stamp, temp_time_series_data), axis=1)
-        
-        
+
         else:
-            self.dir_result = self.data_path.parent / "result"
-            self.dir_result.mkdir(exist_ok=True, parents=True)
+            print("File:", self.data_path.stem)
             
+            # Create a directory for saving results
+            self.dir_result = self.data_path.parent / "result" / self.data_path.stem
+            self.dir_result.mkdir(exist_ok=True, parents=True)
+
             temp_col_names = ["time", "x", "y", "z"]
             self.time_series_data = pd.read_csv(self.data_path, header=None, names=temp_col_names)
-            
+
             self.time_series_data["time"] = pd.to_timedelta(self.time_series_data["time"], unit="s")
 
             self.asc_file_stem_list = [self.data_path.stem]
             self.initial_time = datetime.datetime.strptime(self.asc_file_stem_list[0][2:16], "%Y%m%d%H%M%S") + self.time_dif
-            
+
             self.time_series_data["time"] = self.time_series_data["time"] + self.initial_time
-            
+
         self.col_names = self.time_series_data.columns.values
                 
     
     def export_time_series_record(self, ylim=[-0.001, 0.001]):
-        
+        """
+        Export the time series record as a plot.
+
+        Args:
+            ylim (list, optional): Y-axis limits for the plot. Defaults to [-0.001, 0.001].
+
+        Returns:
+            None
+
+        """
+        # Set the y-axis limits
         self.ylim = ylim
+        
+        # Export the time series record plot
         fig, _ = self._export_time_series_record_base()
         
         fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_timeseries.png")
@@ -127,15 +198,42 @@ class CV374Data:
         plt.close()
         gc.collect()
     
-    def calcurate_HV_spectrum(self, clip_num_data = 16384, cosine_taper = True, 
-                              is_butterworth_filter = False, butterworth_order = 2,
-                              butterworth_lowcut = 0.1, butterworth_highcut = 20,
-                              is_parzen_smoothing = False, parzen_width = 0.2, 
-                              is_konno_ohmachi_smoothing = True, konno_ohmachi_width = 0.2):
-        
+    
+    def calcurate_HV_spectrum(self, clip_num_data=16384, cosine_taper=True, is_apply_butterworth_filter=True,
+                              is_export_timeseries_butterworth_filter=False, butterworth_order=2,
+                              butterworth_lowcut=0.1, butterworth_highcut=20,
+                              is_parzen_smoothing=True, parzen_width=0.2, 
+                              is_konno_ohmachi_smoothing=False, konno_ohmachi_width=0.2,
+                              is_export_figure_3D_running_spectra=False, surface_thin_out_interval=10,
+                              is_export_figure_2D_running_spectra=False, freq_lim=[0.1, 50], HVSR_lim=[0.05, 50]):
+        """
+        Calculates the HV spectrum.
+
+        Args:
+            clip_num_data (int, optional): Number of data points to clip for HV spectrum calculation. Defaults to 16384.
+            cosine_taper (bool, optional): Flag for applying cosine taper. Defaults to True.
+            is_export_timeseries_butterworth_filter (bool, optional): Flag for applying Butterworth filter. Defaults to False.
+            butterworth_order (int, optional): Order of the Butterworth filter. Defaults to 2.
+            butterworth_lowcut (float, optional): Lowcut frequency for the Butterworth filter. Defaults to 0.1.
+            butterworth_highcut (float, optional): Highcut frequency for the Butterworth filter. Defaults to 20.
+            is_parzen_smoothing (bool, optional): Flag for applying Parzen smoothing. Defaults to True.
+            parzen_width (float, optional): Width parameter for Parzen smoothing. Defaults to 0.2.
+            is_konno_ohmachi_smoothing (bool, optional): Flag for applying Konno-Ohmachi smoothing. Defaults to False.
+            konno_ohmachi_width (float, optional): Width parameter for Konno-Ohmachi smoothing. Defaults to 0.2.
+            is_export_figure_3D_running_spectra (bool, optional): Flag for exporting 3D running spectra. Defaults to False.
+            surface_thin_out_interval (int, optional): Interval for thinning out the surface in 3D running spectra. Defaults to 10.
+            is_export_figure_2D_running_spectra (bool, optional): Flag for exporting 2D running spectra. Defaults to False.
+            freq_lim (list, optional): Frequency limits for HV spectrum. Defaults to [0.1, 50].
+            HVSR_lim (list, optional): HVSR limits for HV spectrum. Defaults to [0.05, 50].
+
+        Returns:
+            None
+
+        """
         self.clip_num_data = clip_num_data
         
-        self.is_butterworth_filter = is_butterworth_filter
+        self.is_apply_butterworth_filter = is_apply_butterworth_filter
+        self.is_export_timeseries_butterworth_filter = is_export_timeseries_butterworth_filter
         self.butterworth_order = butterworth_order
         self.butterworth_lowcut = butterworth_lowcut
         self.butterworth_highcut = butterworth_highcut
@@ -145,14 +243,22 @@ class CV374Data:
         self.is_parzen_smoothing = is_parzen_smoothing
         self.parzen_width = parzen_width
         
+        self.is_export_figure_3D_running_spectra = is_export_figure_3D_running_spectra
+        self.surface_thin_out_interval = surface_thin_out_interval
+        
+        self.is_export_figure_2D_running_spectra = is_export_figure_2D_running_spectra
+        self.freq_lim = freq_lim
+        self.HVSR_lim = HVSR_lim        
+        
         self.is_konno_ohmachi_smoothing = is_konno_ohmachi_smoothing
         self.konno_ohmachi_width = konno_ohmachi_width
         
-        # apply butterworth filter if is_butterworth_filter is True
-        if self.is_butterworth_filter:
+        # apply butterworth filter if is_export_timeseries_butterworth_filter is True
+        if self.is_apply_butterworth_filter:
             temp_b, temp_a = ss.butter(self.butterworth_order, [self.butterworth_lowcut, self.butterworth_highcut], btype="band", fs=self.freq)
             self.time_series_data.iloc[:, 1:] = ss.filtfilt(temp_b, temp_a, self.time_series_data.iloc[:, 1:], axis=0)
-            
+        
+        if self.is_apply_butterworth_filter and self.is_export_timeseries_butterworth_filter:
             fig, _ = self._export_time_series_record_base()
             
             fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_timeseries_butterworth.png")
@@ -169,35 +275,59 @@ class CV374Data:
         
         self.frequecy_domain_index = np.arange(0, temp_last_index, temp_fft_interval)
         
-        for i in self.frequecy_domain_index:
-            
-            temp_col_name = "HVSR_power_smoothed_" + "{:07d}".format(i)
-            temp_frequecy_domain_data = self._calcurate_HV_spectrum_base(self.time_series_data.iloc[i:self.clip_num_data+i, 1:]).copy()
-            
-            if i == 0:
-                self.frequecy_domain_data = temp_frequecy_domain_data[["freq", "HVSR_power_smoothed"]]
-            
-            else:
-                self.frequecy_domain_data = pd.concat((self.frequecy_domain_data, temp_frequecy_domain_data["HVSR_power_smoothed"]), axis=1)
+        temp_csv_path = self.dir_result / (self.asc_file_stem_list[0] + "_HV_spectrum.csv")
+        
+        if temp_csv_path.exists():
+            self.frequecy_domain_data = pd.read_csv(temp_csv_path)
+            print("Loaded HV spectrum!")
+        
+        else:
+            for i in self.frequecy_domain_index:
                 
-            self.frequecy_domain_data.rename(columns={"HVSR_power_smoothed":temp_col_name}, inplace=True)
+                temp_col_name = "HVSR_power_smoothed_" + "{:07d}".format(i)
+                temp_frequecy_domain_data = self._calcurate_HV_spectrum_base(self.time_series_data.iloc[i:self.clip_num_data+i, 1:]).copy()
+                
+                if i == 0:
+                    self.frequecy_domain_data = temp_frequecy_domain_data[["freq", "HVSR_power_smoothed"]]
+                
+                else:
+                    self.frequecy_domain_data = pd.concat((self.frequecy_domain_data, temp_frequecy_domain_data["HVSR_power_smoothed"]), axis=1)
+                
+                self.frequecy_domain_data.rename(columns={"HVSR_power_smoothed":temp_col_name}, inplace=True)
+                
+                print("\r", str(i), "/", temp_last_index, end="")
+        
+            print("")
+            print("Calcurated HV spectrum!")
+        
+        if self.is_export_figure_3D_running_spectra:
+            self._export_running_HV_spectra_3D() 
+        
+        if self.is_export_figure_2D_running_spectra:
+            self._export_running_HV_spectra_2D()
+        
+        if not temp_csv_path.exists():
+            self.frequecy_domain_data.to_csv(temp_csv_path, index=False)
+            print("Saved HV spectrum!")
             
-            print("Calcurated HV spectrum!", str(i), "/", temp_last_index)            
-            
         
-        
-        
-    def export_HV_spectrum(self, start_indexes = [0, 5000, 10000], is_only_show_parzen_filter_result = True):
+    def export_HV_spectrum(self, start_indexes = [0, 1], is_only_show_parzen_filter_result = True):
         
         self.start_indexes = start_indexes
-
         self.is_only_show_parzen_filter_result = is_only_show_parzen_filter_result
+        
+        
+        if self.is_apply_butterworth_filter:
+            temp_b, temp_a = ss.butter(self.butterworth_order, [self.butterworth_lowcut, self.butterworth_highcut], btype="band", fs=self.freq)
+            self.time_series_data.iloc[:, 1:] = ss.filtfilt(temp_b, temp_a, self.time_series_data.iloc[:, 1:], axis=0)
         
         fig, axes = self._export_time_series_record_base()
         
         # Add rectangular shape to the plot
         for i in range(6):
+            
             for j, start_index in enumerate(self.start_indexes):
+            
                 temp_bottom = axes[i, 0].get_ylim()[0]
                 temp_top = axes[i, 0].get_ylim()[1]
                 temp_height = temp_top - temp_bottom
@@ -205,20 +335,21 @@ class CV374Data:
                 axes[i, 0].add_patch(patches.Rectangle(xy=(self.time_series_data["time"].iloc[start_index], temp_bottom),
                                                        width=temp_width, height=temp_height, linewidth=0, facecolor="r", alpha=0.2))
                 # Add text at the upper left of the rectangular shape with buffer
-                axes[i, 0].text(self.time_series_data["time"].iloc[start_index], temp_top, str(j) + "," + str(start_index), fontsize=6, color="k", verticalalignment="top", horizontalalignment="left", rotation="vertical")
+                axes[i, 0].text(self.time_series_data["time"].iloc[start_index], temp_top, str(j) + "," + str(start_index), 
+                                fontsize=4, color="k", verticalalignment="top", horizontalalignment="left", rotation="vertical")
                     
         fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_timeseries_with_clipped_section.png")
         
         fig.savefig(fig_name, format="png", dpi=600, pad_inches=0.05, bbox_inches="tight")
-        print("Exported time-series record!")
+        print("Exported time-series record with section windows!")
         
         plt.clf()
         plt.close()
         gc.collect()  
+                
+        temp_freq_at_peaks = self._export_HV_spectrum_base()
         
-        self.frequecy_domain_data, self.geomean_frequecy_domain_data = self._calcurate_HV_spectrum()
-        
-        self._export_HV_spectrum_base()
+        return temp_freq_at_peaks
     
     
     def _calcurate_HV_spectrum_base(self, acc_data=None):
@@ -357,14 +488,36 @@ class CV374Data:
         if self.is_only_show_parzen_filter_result:
             fig, axes = setup_figure()
             
+            temp_section_col_name = ["HVSR_power_smoothed_" + "{:07d}".format(i) for i in self.start_indexes]
             
-            for i in range(len(self.start_indexes)):
-                axes[0, 0].loglog(self.frequecy_domain_data[i]["freq"], self.frequecy_domain_data[i]["HVSR_power_smoothed"], "k", linewidth=0.5, alpha=0.25)
+            for temp_section_col_name_each in temp_section_col_name:
+                axes[0, 0].loglog(self.frequecy_domain_data["freq"], self.frequecy_domain_data[temp_section_col_name_each], "k", linewidth=0.5, alpha=0.25)
             
-            axes[0, 0].loglog(self.geomean_frequecy_domain_data["freq"], self.geomean_frequecy_domain_data["geomean_HVSR_power_smoothed"], "r", linewidth=1, alpha=0.875)
+            geomean_HVSR = np.prod(self.frequecy_domain_data[temp_section_col_name], axis=1) ** (1/len(self.start_indexes))
+            axes[0, 0].loglog(self.frequecy_domain_data["freq"], geomean_HVSR, "r", linewidth=1, alpha=0.875)
+                        
+            # find the peaks of the HVSR
+            geomean_HVSR_peaks, geomean_HVSR_properties = ss.find_peaks(geomean_HVSR[self.frequecy_domain_data["freq"] < 10], prominence=1)
             
-            axes[0, 0].set_xlim(0.1, 50)
-            axes[0, 0].set_ylim(0.1, 100)
+            # sort the peaks by prominence
+            geomean_HVSR_peaks = geomean_HVSR_peaks[np.argsort(geomean_HVSR_properties["prominences"])[::-1]]
+            
+            # limit the number of peaks to 4
+            if len(geomean_HVSR_peaks) > 4:
+                geomean_HVSR_peaks = geomean_HVSR_peaks[:4]
+                
+            axes[0, 0].vlines(x=self.frequecy_domain_data["freq"].iloc[geomean_HVSR_peaks], ymin=self.HVSR_lim[0], ymax=self.HVSR_lim[1], color="r", linewidth=0.5, linestyle="--")
+            
+            # annotate the peaks with their frequencies
+            for i, temp_peak in enumerate(geomean_HVSR_peaks):
+                axes[0, 0].annotate("#"+str(i+1)+", "+str(round(self.frequecy_domain_data["freq"].iloc[temp_peak], 2)), 
+                                    (self.frequecy_domain_data["freq"].iloc[temp_peak], geomean_HVSR[temp_peak]), 
+                                    textcoords='data', 
+                                    xytext=(self.frequecy_domain_data["freq"].iloc[temp_peak], self.HVSR_lim[1]*10**-0.05), ha="right", 
+                                    va="top", fontsize=6, rotation=90)
+            
+            axes[0, 0].set_xlim(self.freq_lim[0], self.freq_lim[1])
+            axes[0, 0].set_ylim(self.HVSR_lim[0], self.HVSR_lim[1])
             axes[0, 0].spines["top"].set_linewidth(0.5)
             axes[0, 0].spines["bottom"].set_linewidth(0.5)
             axes[0, 0].spines["right"].set_linewidth(0.5)
@@ -375,8 +528,8 @@ class CV374Data:
             axes[0, 0].set_xlabel("Frequency (Hz)")
             axes[0, 0].grid(which="major", linestyle="-", linewidth=0.25)
             
-            
         else:
+            # Under maintenance. The code will not be working properly.
             fig, axes = setup_figure(num_col=2, width=10)
             
             for j in range(2):
@@ -405,3 +558,90 @@ class CV374Data:
         plt.clf()
         plt.close()
         gc.collect()
+        
+        return self.frequecy_domain_data["freq"].iloc[geomean_HVSR_peaks].values
+    
+    
+    def _export_running_HV_spectra_3D(self):
+                
+        temp_frequecy_domain_data = self.frequecy_domain_data.copy()
+        y = temp_frequecy_domain_data["freq"][1:]
+        
+        temp_frequecy_domain_data = temp_frequecy_domain_data.iloc[1:, 1::self.surface_thin_out_interval]
+        temp_frequecy_domain_data_columns = temp_frequecy_domain_data.columns.values
+        
+        temp_x_ticktext = [int(temp_frequecy_domain_data_columns[i][-7:]) for i in range(len(temp_frequecy_domain_data_columns))]
+        temp_zmin_log10 = math.log10(self.HVSR_lim[0])
+        temp_zmax_log10 = math.log10(self.HVSR_lim[1])
+        temp_z_tickvals = np.linspace(temp_zmin_log10, temp_zmax_log10, 5)
+        temp_z_ticktext = np.logspace(temp_zmin_log10, temp_zmax_log10, 5)
+        
+        x = np.arange(0, len(temp_frequecy_domain_data_columns))
+        z = np.log10(temp_frequecy_domain_data.values)
+        
+        fig = go.Figure(data=[go.Surface(x=x, y=y, z=z, cmin=temp_zmin_log10, cmax=temp_zmax_log10)])
+        
+        fig.update_layout(scene=dict(
+            xaxis = dict(title="Index",
+                         tickmode="array", 
+                         tickvals=np.arange(0, len(temp_frequecy_domain_data_columns), 1), 
+                         ticktext=temp_x_ticktext,
+                         autorange="reversed"),
+            yaxis = dict(title="Frequency (Hz)",
+                         type="log"),
+            zaxis = dict(title="HVSR",
+                         range=[temp_zmin_log10, temp_zmax_log10],
+                         tickmode="array",
+                         tickvals=temp_z_tickvals,
+                         ticktext=temp_z_ticktext),
+            aspectratio=dict(x=2, y=1, z=0.5),
+        ))
+        
+        # save the figure as an interactive plot
+        fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_running_HV_spectra_3D.html")
+        fig.write_html(fig_name)
+        
+        print("Exported running HV spectra (3D)!")
+        
+    
+    def _export_running_HV_spectra_2D(self):
+        
+        temp_frequecy_domain_data = self.frequecy_domain_data.copy()
+        y = temp_frequecy_domain_data["freq"][1:]
+        
+        temp_frequecy_domain_data = temp_frequecy_domain_data.iloc[1:, 1:]
+        temp_x_col_name = temp_frequecy_domain_data.columns.values
+        
+        x = np.array([int(temp_x_col_name[i][-7:]) for i in range(len(temp_x_col_name))]) + self.clip_num_data // 2
+        z = np.log10(temp_frequecy_domain_data.values)
+        
+        x, y = np.meshgrid(x, y)
+        
+        fig, axes = setup_figure(num_row=1, num_col=1, width=10)
+        
+        temp_zmin_log10 = math.log10(self.HVSR_lim[0])
+        temp_zmax_log10 = math.log10(self.HVSR_lim[1])
+        norm = mcolors.Normalize(vmin=temp_zmin_log10, vmax=temp_zmax_log10)
+        temp_axes = axes[0, 0].pcolormesh(x, y, z, cmap="jet", shading="auto", norm=norm)
+        temp_axes_colorbar = fig.colorbar(temp_axes, ax=axes[0, 0], norm=norm)
+        
+        axes[0, 0].set_xlabel("Index")
+        axes[0, 0].set_xlim(0, self.time_series_data.shape[0] - 1)
+        
+        axes[0, 0].xaxis.set_tick_params(rotation=90)
+        
+        axes[0, 0].set_ylabel("Frequency (Hz)")
+        axes[0, 0].set_yscale("log")
+        axes[0, 0].set_ylim(self.freq_lim[0], self.freq_lim[1])
+        
+        temp_axes_colorbar.ax.set_ylabel("log10(HVSR)", rotation=90)
+                        
+        fig_name = self.dir_result / (self.asc_file_stem_list[0] + "_running_HV_spectra_2D.png")
+        fig.savefig(fig_name, format="png", dpi=600, pad_inches=0.05, bbox_inches="tight")
+        
+        print("Exported running HV spectra (2D)!")
+        
+        plt.clf()
+        plt.close()
+        gc.collect()  
+                
