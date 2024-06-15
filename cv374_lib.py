@@ -12,9 +12,6 @@ import matplotlib.ticker as mticker
 import plotly.graph_objects as go
 import math
 
-
-
-
 plt.rcParams["font.family"] = "Arial"
 plt.rcParams["mathtext.fontset"] = "dejavuserif" 
 plt.rcParams["legend.fancybox"] = False
@@ -27,6 +24,14 @@ def setup_figure(num_row=1, num_col=1, width=5, height=4, left=0.125, right=0.9,
     fig, axes = plt.subplots(num_row, num_col, figsize=(width, height), squeeze=False)   
     fig.subplots_adjust(left=left, right=right, hspace=hspace, wspace=wspace)
     return (fig, axes)
+
+
+## class for initialize directory structure and processed data
+class InitializeData:
+    
+    def __init__(self) -> None:
+        
+        
                
 
 class CV374Data:
@@ -89,9 +94,15 @@ class CV374Data:
         self.parzen_width = 0.2  # Width parameter for Parzen smoothing
         self.is_only_show_parzen_filter_result = True  # Flag for showing only Parzen filter result
         self.is_export_figure_3D_running_spectra = False  # Flag for exporting 3D running spectra
+        self.is_export_figure_2D_running_spectra = False  # Flag for exporting 3D running spectra
+        self.is_export_csv_geomean_spectrum = False  # Flag for exporting 3D running spectra
         self.surface_thin_out_interval = 10  # Interval for thinning out the surface in 3D running spectra
         self.freq_lim = [0.1, 50]  # Frequency limits for HV spectrum
         self.HVSR_lim = [0.01, 100]  # HVSR limits for HV spectrum
+        
+        self.col_names = []  # Column names of the time series data
+        self.time_series_data = None  # Time series data
+        self.asc_file_stem_list = []  # List of file stem names for exporting figures
 
     def read_data(self, data_path, time_dif=-6) -> None:
         """
@@ -211,14 +222,17 @@ class CV374Data:
                               is_parzen_smoothing=True, parzen_width=0.2, 
                               is_konno_ohmachi_smoothing=False, konno_ohmachi_width=0.2,
                               is_export_figure_3D_running_spectra=False, surface_thin_out_interval=10,
-                              is_export_figure_2D_running_spectra=False, freq_lim=[0.1, 50], HVSR_lim=[0.05, 50]):
+                              is_export_figure_2D_running_spectra=False, 
+                              is_export_csv_geomean_spectrum=False,
+                              freq_lim=[0.1, 50], HVSR_lim=[0.05, 50]):
         """
         Calculates the HV spectrum.
 
         Args:
             clip_num_data (int, optional): Number of data points to clip for HV spectrum calculation. Defaults to 16384.
             cosine_taper (bool, optional): Flag for applying cosine taper. Defaults to True.
-            is_export_timeseries_butterworth_filter (bool, optional): Flag for applying Butterworth filter. Defaults to False.
+            is_apply_butterworth_filter (bool, optional): Flag for applying Butterworth filter. Defaults to True.
+            is_export_timeseries_butterworth_filter (bool, optional): Flag for exporting time series record with Butterworth filter applied. Defaults to False.
             butterworth_order (int, optional): Order of the Butterworth filter. Defaults to 2.
             butterworth_lowcut (float, optional): Lowcut frequency for the Butterworth filter. Defaults to 0.1.
             butterworth_highcut (float, optional): Highcut frequency for the Butterworth filter. Defaults to 20.
@@ -229,6 +243,7 @@ class CV374Data:
             is_export_figure_3D_running_spectra (bool, optional): Flag for exporting 3D running spectra. Defaults to False.
             surface_thin_out_interval (int, optional): Interval for thinning out the surface in 3D running spectra. Defaults to 10.
             is_export_figure_2D_running_spectra (bool, optional): Flag for exporting 2D running spectra. Defaults to False.
+            is_export_csv_geomean_spectrum (bool, optional): Flag for exporting HV spectrum as CSV. Defaults to False.
             freq_lim (list, optional): Frequency limits for HV spectrum. Defaults to [0.1, 50].
             HVSR_lim (list, optional): HVSR limits for HV spectrum. Defaults to [0.05, 50].
 
@@ -253,6 +268,7 @@ class CV374Data:
         self.surface_thin_out_interval = surface_thin_out_interval
         
         self.is_export_figure_2D_running_spectra = is_export_figure_2D_running_spectra
+        self.is_export_csv_geomean_spectrum = is_export_csv_geomean_spectrum
         self.freq_lim = freq_lim
         self.HVSR_lim = HVSR_lim        
         
@@ -314,13 +330,16 @@ class CV374Data:
         
         if self.is_export_figure_2D_running_spectra:
             self._export_running_HV_spectra_2D()
-        
+                
         if not temp_csv_path.exists():
             self.frequecy_domain_data.to_csv(temp_csv_path, index=False)
-            print("Saved HV spectrum!")
             
+            print("Saved HV spectrum!")       
+                        
         
-    def export_HV_spectrum(self, start_indexes = [0, 1], is_only_show_parzen_filter_result = True):
+    def export_HV_spectrum(self, start_indexes = [0, 1], is_only_show_parzen_filter_result = True, ylim=[-0.001, 0.001]):
+        
+        self.ylim = ylim
         
         self.start_indexes = start_indexes
         self.is_only_show_parzen_filter_result = is_only_show_parzen_filter_result
@@ -502,6 +521,8 @@ class CV374Data:
                 axes[0, 0].loglog(self.frequecy_domain_data["freq"], self.frequecy_domain_data[temp_section_col_name_each], "k", linewidth=0.5, alpha=0.25)
             
             geomean_HVSR = np.prod(self.frequecy_domain_data[temp_section_col_name], axis=1) ** (1/len(self.start_indexes))
+            self.frequecy_domain_data["geomean_HVSR"] = geomean_HVSR
+            
             axes[0, 0].loglog(self.frequecy_domain_data["freq"], geomean_HVSR, "r", linewidth=1, alpha=0.875)
                         
             # find the peaks of the HVSR
@@ -566,6 +587,14 @@ class CV374Data:
         plt.clf()
         plt.close()
         gc.collect()
+        
+        if self.is_export_csv_geomean_spectrum:
+            temp_geomean_result = self.frequecy_domain_data[["freq", "geomean_HVSR"]].copy()
+            temp_geomean_csv_path = self.dir_result / (self.asc_file_stem_list[0] + "_geomean_HV_spectrum.csv")
+            temp_geomean_result.to_csv(temp_geomean_csv_path, index=False)
+            
+            print("Exported geomean HV spectrum file!")
+            
         
         return self.frequecy_domain_data["freq"].iloc[geomean_HVSR_peaks].values
     
@@ -668,4 +697,6 @@ class CV374Data:
         plt.clf()
         plt.close()
         gc.collect()  
+        
+        
                 
