@@ -29,7 +29,12 @@ def setup_figure(num_row=1, num_col=1, width=5, height=4, left=0.125, right=0.9,
 ## class for initialize directory structure and processed data
 class InitializeData:
     
-    def __init__(self) -> None:
+    def __init__(self, dir_path) -> None:
+        
+        self.dir_path = Path(dir_path).resolve()
+        
+        # search .t3w file and .log file
+        temp_t3w_file_list = list(self.dir_path.glob("**.t3w"))
         
         
                
