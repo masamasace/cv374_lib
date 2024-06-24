@@ -26,17 +26,144 @@ def setup_figure(num_row=1, num_col=1, width=5, height=4, left=0.125, right=0.9,
     return (fig, axes)
 
 
-## class for initialize directory structure and processed data
+# class for initialize directory structure and processed data
+# NOTE: Please do not select the path including the dataset from multiple sensors because nmea and t3w files are not distinguished.
+
 class InitializeData:
     
     def __init__(self, dir_path) -> None:
         
         self.dir_path = Path(dir_path).resolve()
         
+        self._make_preprocessed_dir()
+        
+        self.t3w_file_list, self.log_file_list = self._make_file_list()
+        
+        self.log_data = self._read_nmea_log()
+        
+        self.log_file_list = self._fetch_t3w_to_log()
+        
+    def _make_preprocessed_dir(self, is_delete_if_existed=False):
+        
+        self.preprocessed_path = self.dir_path / "result"
+        
+        if self.preprocessed_path.exists() and is_delete_if_existed:
+            self.preprocessed_path.rmdir()
+        
+        self.preprocessed_path.mkdir(parents=True, exist_ok=True)
+        
+    
+    def _make_file_list(self):
+        
         # search .t3w file and .log file
-        temp_t3w_file_list = list(self.dir_path.glob("**.t3w"))
+        # log file is nmea file
+        temp_t3w_file_list = list(self.dir_path.glob("**/*.t3w"))
+        temp_log_file_list = list(self.dir_path.glob("**/*.log"))
         
+        # sort order
+        temp_t3w_file_list = sorted(temp_t3w_file_list)
+        temp_log_file_list = sorted(temp_log_file_list)
+    
+        return (temp_t3w_file_list, temp_log_file_list)
+    
+    def _read_nmea_log(self):
         
+        temp_log_data = []
+        
+        # read all nmea log files
+        for temp_log_file in self.log_file_list:
+            
+            # convert nmea log file to numpy data
+            temp_log_data_time = []
+            temp_log_data_lat_lon = []
+            
+            # TODO: "GPGGA" tag should be verified
+            with open(temp_log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if "GPGGA" in line:
+                        temp_log_data_lat_lon.append(line.split(","))
+                    else:
+                        temp_log_data_time.append(line.split(","))
+            
+            temp_log_data_lat_lon = np.array(temp_log_data_lat_lon)
+            
+            # extract start and end time of record
+            temp_log_data_start_time = datetime.datetime(
+                year = int(temp_log_data_time[0][4]),
+                month = int(temp_log_data_time[0][3]),
+                day = int(temp_log_data_time[0][2]),
+                hour = int(temp_log_data_time[0][1][:2]),
+                minute = int(temp_log_data_time[0][1][2:4]),
+                second = int(temp_log_data_time[0][1][4:6]),
+                microsecond = int(temp_log_data_time[0][1][7:])*10
+            )
+
+            temp_log_data_end_time = datetime.datetime(
+                year = int(temp_log_data_time[-1][4]),
+                month = int(temp_log_data_time[-1][3]),
+                day = int(temp_log_data_time[-1][2]),
+                hour = int(temp_log_data_time[-1][1][:2]),
+                minute = int(temp_log_data_time[-1][1][2:4]),
+                second = int(temp_log_data_time[-1][1][4:6]),
+                microsecond = int(temp_log_data_time[-1][1][7:])*10
+            )
+            
+            # convert numpy data to pandas dataframe
+            temp_col_name = ["datetime_JST", "lat", "long", 
+                            "GPS_quality", "SV", "HDOP", 
+                            "orthometric_height","geoid_separation"]
+            
+            temp_log_data_lat_lon = pd.DataFrame(temp_log_data_lat_lon)
+            temp_log_data_lat_lon["datetime_JST"] = pd.to_datetime(str(temp_log_data_start_time.year)+
+                                                                str(temp_log_data_start_time.month)+
+                                                                str(temp_log_data_start_time.day)+
+                                                                temp_log_data_lat_lon[1], 
+                                                                format='%Y%m%d%H%M%S.%f')
+            temp_log_data_lat_lon["lat"] = temp_log_data_lat_lon[2].replace("", np.NaN).astype("float") / 100
+            temp_log_data_lat_lon["lat"] = temp_log_data_lat_lon["lat"].where(temp_log_data_lat_lon[3] == "N", 
+                                                                            temp_log_data_lat_lon["lat"] * -1)
+            temp_log_data_lat_lon["long"] = temp_log_data_lat_lon[4].replace("", np.NaN).astype("float") / 100
+            temp_log_data_lat_lon["long"] = temp_log_data_lat_lon["long"].where(temp_log_data_lat_lon[5] == "E",
+                                                                                temp_log_data_lat_lon["long"] * -1) 
+            temp_log_data_lat_lon["GPS_quality"] = temp_log_data_lat_lon[6].replace("", np.NaN).astype("int")
+            temp_log_data_lat_lon["SV"] = temp_log_data_lat_lon[7].replace("", np.NaN).astype("int")
+            temp_log_data_lat_lon["HDOP"] = temp_log_data_lat_lon[8].replace("", np.NaN).astype("float")
+            temp_log_data_lat_lon["orthometric_height"] = temp_log_data_lat_lon[9].replace("", np.NaN).astype("float")
+            temp_log_data_lat_lon["geoid_separation"] = temp_log_data_lat_lon[11].replace("", np.NaN).astype("float")
+
+            temp_log_data_lat_lon = temp_log_data_lat_lon[temp_col_name]
+            
+            temp_log_data.append([temp_log_file, temp_log_data_lat_lon, temp_log_data_start_time, temp_log_data_end_time])
+        
+        return temp_log_data
+
+    def _fetch_t3w_to_log(self):
+        
+        temp_fetched_t3w_data = []
+        
+        for i, temp_t3w_file in enumerate(self.t3w_file_list):
+            
+            # read start time from the file name 
+            temp_t3w_start_time = datetime.datetime(
+                year = int(temp_t3w_file.stem[:4]),
+                month = int(temp_t3w_file.stem[4:6]),
+                day = int(temp_t3w_file.stem[6:8]),
+                hour = int(temp_t3w_file.stem[8:10]),
+                minute = int(temp_t3w_file.stem[10:12]),
+                second = int(temp_t3w_file.stem[12:14])
+            )
+            
+            # find the corresponding nmea log data
+            for temp_log_data in self.log_data:
+                
+                if temp_t3w_start_time >= temp_log_data[2] and temp_t3w_start_time <= temp_log_data[3]:
+                    
+                    temp_fetched_t3w_data.append([temp_log_data[0], temp_t3w_file])
+                    
+                    break
+            
+        return temp_fetched_t3w_data
+                
                
 
 class CV374Data:
